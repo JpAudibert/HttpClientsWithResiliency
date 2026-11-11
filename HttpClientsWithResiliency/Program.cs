@@ -1,3 +1,4 @@
+using Flurl.Http;
 using HttpClientsWithResiliency.Models;
 using HttpClientsWithResiliency.Strategies;
 
@@ -24,8 +25,7 @@ app.MapGet(
     async (string currency) =>
     {
         HttpClient httpClient = new DefaultHttpClientFactory(
-            ratesApiConfiguration.BaseUrl,
-            ratesApiConfiguration.AppId
+            ratesApiConfiguration.BaseUrl
         ).CreateClient("default");
 
         string requestUri =
@@ -36,6 +36,34 @@ app.MapGet(
         return response.IsSuccessStatusCode
             ? Results.Ok(await response.Content.ReadFromJsonAsync<ExchangeRatesResponse>())
             : Results.Problem($"Error retrieving exchange rates: {response.ReasonPhrase}");
+    }
+);
+
+app.MapGet(
+    "/exchange-rates/flurl",
+    async (string currency) =>
+    {
+        FlurlClient flurlClient = new FlurlHttpClientFactory(
+            ratesApiConfiguration.BaseUrl
+        ).CreateClient();
+
+        string requestUri = "latest.json";
+
+        ExchangeRatesResponse response = await flurlClient
+            .Request(requestUri)
+            .SetQueryParams(
+                new
+                {
+                    app_id = ratesApiConfiguration.AppId,
+                    @base = ratesApiConfiguration.BaseIsoCode,
+                    symbols = currency,
+                }
+            )
+            .GetJsonAsync<ExchangeRatesResponse>();
+
+        return response is not null
+            ? Results.Ok(response)
+            : Results.Problem($"Error retrieving exchange rates with Flurl");
     }
 );
 

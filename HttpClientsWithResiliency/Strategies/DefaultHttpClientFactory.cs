@@ -1,6 +1,6 @@
 namespace HttpClientsWithResiliency.Strategies;
 
-public class DefaultHttpClientFactory(string baseAddress, string apiKey) : IHttpClientFactory
+public class DefaultHttpClientFactory(string baseAddress) : IHttpClientFactory
 {
     public HttpClient CreateClient(string name)
     {
@@ -11,7 +11,6 @@ public class DefaultHttpClientFactory(string baseAddress, string apiKey) : IHttp
             DefaultRequestHeaders =
             {
                 { "Accept", "application/json" },
-                { "Authorization", $"Bearer {apiKey}" },
             },
         };
 
