@@ -14,14 +14,14 @@ public static class ExchangeRatesRoutes
     {
         app.MapGet(
             "/exchange-rates/default",
-            async (string currency) =>
+            async (string currency, string appId) =>
             {
                 HttpClient httpClient = new DefaultHttpClientFactory(
                     configuration.BaseUrl
                 ).CreateClient("default");
 
                 string requestUri =
-                    $"latest.json?app_id={configuration.AppId}&base={configuration.BaseIsoCode}&symbols={currency}";
+                    $"latest.json?app_id={appId}&base={configuration.BaseIsoCode}&symbols={currency}";
 
                 HttpResponseMessage response = await httpClient.GetAsync(requestUri);
 
@@ -33,7 +33,7 @@ public static class ExchangeRatesRoutes
 
         app.MapGet(
             "/exchange-rates/flurl",
-            async (string currency) =>
+            async (string currency, string appId) =>
             {
                 FlurlClient flurlClient = new FlurlHttpClientFactory(
                     configuration.BaseUrl
@@ -46,7 +46,7 @@ public static class ExchangeRatesRoutes
                     .SetQueryParams(
                         new
                         {
-                            app_id = configuration.AppId,
+                            app_id = appId,
                             @base = configuration.BaseIsoCode,
                             symbols = currency,
                         }
@@ -61,14 +61,14 @@ public static class ExchangeRatesRoutes
 
         app.MapGet(
             "/exchange-rates/restsharp",
-            async (string currency) =>
+            async (string currency, string appId) =>
             {
                 IRestClient restClient = new RestSharpHttpClientFactory(
                     configuration.BaseUrl
                 ).CreateClient();
 
                 string requestUri =
-                    $"latest.json?app_id={configuration.AppId}&base={configuration.BaseIsoCode}&symbols={currency}";
+                    $"latest.json?app_id={appId}&base={configuration.BaseIsoCode}&symbols={currency}";
 
                 RestRequest request = new(requestUri, Method.Get);
 
