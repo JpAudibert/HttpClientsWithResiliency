@@ -1,0 +1,6 @@
+@HttpClientsWithResiliency_HostAddress = http://localhost:5271
+
+GET {{HttpClientsWithResiliency_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
