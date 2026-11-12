@@ -1,6 +1,6 @@
 using Flurl.Http;
+using HttpClientsWithResiliency.Helpers;
 using HttpClientsWithResiliency.Models;
-using HttpClientsWithResiliency.Strategies;
 using RestSharp;
 
 namespace HttpClientsWithResiliency.Routes;
@@ -14,71 +14,151 @@ public static class ExchangeRatesRoutes
     {
         app.MapGet(
             "/exchange-rates/default",
-            async (string currency, string appId) =>
+            async (
+                string currency,
+                string appId,
+                IHttpClientFactory clientFactory,
+                ILogger<Program> logger,
+                CancellationToken cancellationToken
+            ) =>
             {
-                HttpClient httpClient = new DefaultHttpClientFactory(
-                    configuration.BaseUrl
-                ).CreateClient("default");
+                return await ExchangeRatesRouteHelpers.ExecuteSafely(
+                    async () =>
+                    {
+                        using HttpClient httpClient = clientFactory.CreateClient("RatesApi");
+                        using HttpResponseMessage response = await httpClient.GetAsync(
+                            ExchangeRatesRouteHelpers.BuildRequestUri(
+                                configuration,
+                                currency,
+                                appId
+                            ),
+                            cancellationToken
+                        );
 
-                string requestUri =
-                    $"latest.json?app_id={appId}&base={configuration.BaseIsoCode}&symbols={currency}";
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            return ExchangeRatesRouteHelpers.CreateUpstreamFailure(
+                                response.StatusCode,
+                                "default",
+                                logger
+                            );
+                        }
 
-                HttpResponseMessage response = await httpClient.GetAsync(requestUri);
+                        ExchangeRatesResponse? rates =
+                            await response.Content.ReadFromJsonAsync<ExchangeRatesResponse>(
+                                cancellationToken: cancellationToken
+                            );
 
-                return response.IsSuccessStatusCode
-                    ? Results.Ok(await response.Content.ReadFromJsonAsync<ExchangeRatesResponse>())
-                    : Results.Problem($"Error retrieving exchange rates: {response.ReasonPhrase}");
+                        return rates is null
+                            ? ExchangeRatesRouteHelpers.CreateInvalidResponse("default", logger)
+                            : Results.Ok(rates);
+                    },
+                    logger
+                );
             }
         );
 
         app.MapGet(
             "/exchange-rates/flurl",
-            async (string currency, string appId) =>
+            async (
+                string currency,
+                string appId,
+                IHttpClientFactory clientFactory,
+                ILogger<Program> logger,
+                CancellationToken cancellationToken
+            ) =>
             {
-                FlurlClient flurlClient = new FlurlHttpClientFactory(
-                    configuration.BaseUrl
-                ).CreateClient();
+                return await ExchangeRatesRouteHelpers.ExecuteSafely(
+                    async () =>
+                    {
+                        using FlurlClient flurlClient = new(clientFactory.CreateClient("RatesApi"));
+                        flurlClient.AllowAnyHttpStatus();
 
-                string requestUri = "latest.json";
+                        using IFlurlResponse response = await flurlClient
+                            .Request("latest.json")
+                            .SetQueryParams(
+                                new
+                                {
+                                    app_id = appId,
+                                    @base = configuration.BaseIsoCode,
+                                    symbols = currency,
+                                }
+                            )
+                            .GetAsync(cancellationToken: cancellationToken);
 
-                ExchangeRatesResponse response = await flurlClient
-                    .Request(requestUri)
-                    .SetQueryParams(
-                        new
+                        if (!response.ResponseMessage.IsSuccessStatusCode)
                         {
-                            app_id = appId,
-                            @base = configuration.BaseIsoCode,
-                            symbols = currency,
+                            return ExchangeRatesRouteHelpers.CreateUpstreamFailure(
+                                response.ResponseMessage.StatusCode,
+                                "Flurl",
+                                logger
+                            );
                         }
-                    )
-                    .GetJsonAsync<ExchangeRatesResponse>();
 
-                return response is not null
-                    ? Results.Ok(response)
-                    : Results.Problem($"Error retrieving exchange rates with Flurl");
+                        ExchangeRatesResponse? rates =
+                            await response.GetJsonAsync<ExchangeRatesResponse>();
+
+                        return rates is null
+                            ? ExchangeRatesRouteHelpers.CreateInvalidResponse("Flurl", logger)
+                            : Results.Ok(rates);
+                    },
+                    logger
+                );
             }
         );
 
         app.MapGet(
             "/exchange-rates/restsharp",
-            async (string currency, string appId) =>
+            async (
+                string currency,
+                string appId,
+                IHttpClientFactory clientFactory,
+                ILogger<Program> logger,
+                CancellationToken cancellationToken
+            ) =>
             {
-                IRestClient restClient = new RestSharpHttpClientFactory(
-                    configuration.BaseUrl
-                ).CreateClient();
+                return await ExchangeRatesRouteHelpers.ExecuteSafely(
+                    async () =>
+                    {
+                        using HttpClient httpClient = clientFactory.CreateClient("RatesApi");
+                        RestClientOptions options = new()
+                        {
+                            BaseUrl = new Uri(configuration.BaseUrl),
+                            ThrowOnAnyError = false,
+                        };
 
-                string requestUri =
-                    $"latest.json?app_id={appId}&base={configuration.BaseIsoCode}&symbols={currency}";
+                        using IRestClient restClient = new RestClient(
+                            httpClient,
+                            options,
+                            disposeHttpClient: false
+                        );
 
-                RestRequest request = new(requestUri, Method.Get);
+                        RestRequest request = new RestRequest("latest.json", Method.Get)
+                            .AddQueryParameter("app_id", appId)
+                            .AddQueryParameter("base", configuration.BaseIsoCode)
+                            .AddQueryParameter("symbols", currency);
 
-                ExchangeRatesResponse? response = await restClient.GetAsync<ExchangeRatesResponse>(
-                    request
+                        RestResponse<ExchangeRatesResponse> response =
+                            await restClient.ExecuteAsync<ExchangeRatesResponse>(
+                                request,
+                                cancellationToken
+                            );
+
+                        if (!response.IsSuccessful)
+                        {
+                            return ExchangeRatesRouteHelpers.CreateUpstreamFailure(
+                                response.StatusCode,
+                                "RestSharp",
+                                logger
+                            );
+                        }
+
+                        return response.Data is null
+                            ? ExchangeRatesRouteHelpers.CreateInvalidResponse("RestSharp", logger)
+                            : Results.Ok(response.Data);
+                    },
+                    logger
                 );
-
-                return response is not null
-                    ? Results.Ok(response)
-                    : Results.Problem($"Error retrieving exchange rates with RestSharp");
             }
         );
 
