@@ -1,7 +1,8 @@
-using Flurl.Http;
 using HttpClientsWithResiliency.Models;
-using HttpClientsWithResiliency.Strategies;
-using RestSharp;
+using HttpClientsWithResiliency.Routes;
+using Microsoft.Extensions.Http.Resilience;
+using System.Net.Http.Headers;
+using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +14,32 @@ RatesApiConfiguration ratesApiConfiguration =
     builder.Configuration.GetSection("RatesApi").Get<RatesApiConfiguration>()
     ?? new RatesApiConfiguration();
 
+builder.Services
+    .AddHttpClient("RatesApi", client =>
+    {
+        client.BaseAddress = new Uri(ratesApiConfiguration.BaseUrl);
+        client.Timeout = Timeout.InfiniteTimeSpan;
+        client.DefaultRequestHeaders.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json")
+        );
+    })
+    .AddStandardResilienceHandler(options =>
+    {
+        options.Retry.MaxRetryAttempts = 3;
+        options.Retry.Delay = TimeSpan.FromMilliseconds(500);
+        options.Retry.BackoffType = DelayBackoffType.Exponential;
+        options.Retry.UseJitter = true;
+        options.Retry.DisableForUnsafeHttpMethods();
+
+        options.CircuitBreaker.FailureRatio = 0.5;
+        options.CircuitBreaker.MinimumThroughput = 5;
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+        options.CircuitBreaker.BreakDuration = TimeSpan.FromSeconds(15);
+
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(20);
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(5);
+    });
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -21,72 +48,6 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.MapGet(
-    "/exchange-rates/default",
-    async (string currency) =>
-    {
-        HttpClient httpClient = new DefaultHttpClientFactory(
-            ratesApiConfiguration.BaseUrl
-        ).CreateClient("default");
-
-        string requestUri =
-            $"latest.json?app_id={ratesApiConfiguration.AppId}&base={ratesApiConfiguration.BaseIsoCode}&symbols={currency}";
-
-        HttpResponseMessage response = await httpClient.GetAsync(requestUri);
-
-        return response.IsSuccessStatusCode
-            ? Results.Ok(await response.Content.ReadFromJsonAsync<ExchangeRatesResponse>())
-            : Results.Problem($"Error retrieving exchange rates: {response.ReasonPhrase}");
-    }
-);
-
-app.MapGet(
-    "/exchange-rates/flurl",
-    async (string currency) =>
-    {
-        FlurlClient flurlClient = new FlurlHttpClientFactory(
-            ratesApiConfiguration.BaseUrl
-        ).CreateClient();
-
-        string requestUri = "latest.json";
-
-        ExchangeRatesResponse response = await flurlClient
-            .Request(requestUri)
-            .SetQueryParams(
-                new
-                {
-                    app_id = ratesApiConfiguration.AppId,
-                    @base = ratesApiConfiguration.BaseIsoCode,
-                    symbols = currency,
-                }
-            )
-            .GetJsonAsync<ExchangeRatesResponse>();
-
-        return response is not null
-            ? Results.Ok(response)
-            : Results.Problem($"Error retrieving exchange rates with Flurl");
-    }
-);
-
-app.MapGet(
-    "/exchange-rates/restsharp",
-    async (string currency) =>
-    {
-        IRestClient restClient = new RestSharpHttpClientFactory(
-            ratesApiConfiguration.BaseUrl
-        ).CreateClient();
-
-        string requestUri =
-            $"latest.json?app_id={ratesApiConfiguration.AppId}&base={ratesApiConfiguration.BaseIsoCode}&symbols={currency}";
-
-        RestRequest request = new(requestUri, Method.Get);
-
-        ExchangeRatesResponse? response = await restClient.GetAsync<ExchangeRatesResponse>(request);
-
-        return response is not null
-            ? Results.Ok(response)
-            : Results.Problem($"Error retrieving exchange rates with RestSharp");
-    }
-);
+app.AddExchangeRatesRoutes(ratesApiConfiguration);
 
 app.Run();
